@@ -3,6 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
+import { Event } from 'vs/base/common/event';
 import { IMarkdownString } from 'vs/base/common/htmlContent';
 import { IDisposable } from 'vs/base/common/lifecycle';
 import { URI } from 'vs/base/common/uri';
@@ -15,6 +16,7 @@ import { SearchData } from 'vs/editor/common/model/textModelSearch';
 import { LanguageId, LanguageIdentifier, FormattingOptions } from 'vs/editor/common/modes';
 import { ThemeColor } from 'vs/platform/theme/common/themeService';
 import { MultilineTokens, MultilineTokens2 } from 'vs/editor/common/model/tokensStore';
+import { TextChange } from 'vs/editor/common/model/textChange';
 
 /**
  * Vertical Lane in the overview ruler of the editor.
@@ -373,21 +375,13 @@ export interface IValidEditOperation {
 	 */
 	range: Range;
 	/**
-	 * The text to replace with. This can be null to emulate a simple delete.
+	 * The text to replace with. This can be empty to emulate a simple delete.
 	 */
-	text: string | null;
+	text: string;
 	/**
-	 * This indicates that this operation has "insert" semantics.
-	 * i.e. forceMoveMarkers = true => if `range` is collapsed, all markers at the position will be moved.
+	 * @internal
 	 */
-	forceMoveMarkers: boolean;
-}
-
-/**
- * @internal
- */
-export interface IValidEditOperations {
-	operations: IValidEditOperation[];
+	textChange: TextChange;
 }
 
 /**
@@ -556,6 +550,18 @@ export interface ITextModel {
 	 * @internal
 	 */
 	mightContainRTL(): boolean;
+
+	/**
+	 * If true, the text model might contain LINE SEPARATOR (LS), PARAGRAPH SEPARATOR (PS).
+	 * If false, the text model definitely does not contain these.
+	 * @internal
+	 */
+	mightContainUnusualLineTerminators(): boolean;
+
+	/**
+	 * @internal
+	 */
+	removeUnusualLineTerminators(selections?: Selection[]): void;
 
 	/**
 	 * If true, the text model might contain non basic ASCII.
@@ -794,7 +800,7 @@ export interface ITextModel {
 	/**
 	 * Search the model.
 	 * @param searchString The string used to search. If it is a regular expression, set `isRegex` to true.
-	 * @param searchScope Limit the searching to only search inside this range.
+	 * @param searchScope Limit the searching to only search inside these ranges.
 	 * @param isRegex Used to indicate that `searchString` is a regular expression.
 	 * @param matchCase Force the matching to match lower/upper case exactly.
 	 * @param wordSeparators Force the matching to match entire words only. Pass null otherwise.
@@ -802,7 +808,7 @@ export interface ITextModel {
 	 * @param limitResultCount Limit the number of results
 	 * @return The ranges where the matches are. It is empty if no matches have been found.
 	 */
-	findMatches(searchString: string, searchScope: IRange, isRegex: boolean, matchCase: boolean, wordSeparators: string | null, captureMatches: boolean, limitResultCount?: number): FindMatch[];
+	findMatches(searchString: string, searchScope: IRange | IRange[], isRegex: boolean, matchCase: boolean, wordSeparators: string | null, captureMatches: boolean, limitResultCount?: number): FindMatch[];
 	/**
 	 * Search the model for the next match. Loops to the beginning of the model if needed.
 	 * @param searchString The string used to search. If it is a regular expression, set `isRegex` to true.
@@ -834,7 +840,17 @@ export interface ITextModel {
 	/**
 	 * @internal
 	 */
-	setSemanticTokens(tokens: MultilineTokens2[] | null): void;
+	setSemanticTokens(tokens: MultilineTokens2[] | null, isComplete: boolean): void;
+
+	/**
+	 * @internal
+	 */
+	setPartialSemanticTokens(range: Range, tokens: MultilineTokens2[] | null): void;
+
+	/**
+	 * @internal
+	 */
+	hasSemanticTokens(): boolean;
 
 	/**
 	 * Flush all tokenization state.
@@ -1099,9 +1115,11 @@ export interface ITextModel {
 	 * Edit the model without adding the edits to the undo stack.
 	 * This can have dire consequences on the undo stack! See @pushEditOperations for the preferred way.
 	 * @param operations The edit operations.
-	 * @return The inverse edit operations, that, when applied, will bring the model back to the previous state.
+	 * @return If desired, the inverse edit operations, that, when applied, will bring the model back to the previous state.
 	 */
-	applyEdits(operations: IIdentifiedSingleEditOperation[]): IValidEditOperation[];
+	applyEdits(operations: IIdentifiedSingleEditOperation[]): void;
+	applyEdits(operations: IIdentifiedSingleEditOperation[], computeUndoEdits: false): void;
+	applyEdits(operations: IIdentifiedSingleEditOperation[], computeUndoEdits: true): IValidEditOperation[];
 
 	/**
 	 * Change the end of line sequence without recording in the undo stack.
@@ -1112,7 +1130,12 @@ export interface ITextModel {
 	/**
 	 * @internal
 	 */
-	_applyUndoRedoEdits(edits: IValidEditOperations[], eol: EndOfLineSequence, isUndoing: boolean, isRedoing: boolean, resultingAlternativeVersionId: number, resultingSelection: Selection[] | null): IValidEditOperations[];
+	_applyUndo(changes: TextChange[], eol: EndOfLineSequence, resultingAlternativeVersionId: number, resultingSelection: Selection[] | null): void;
+
+	/**
+	 * @internal
+	 */
+	_applyRedo(changes: TextChange[], eol: EndOfLineSequence, resultingAlternativeVersionId: number, resultingSelection: Selection[] | null): void;
 
 	/**
 	 * Undo edit operations until the first previous stop point created by `pushStackElement`.
@@ -1266,9 +1289,12 @@ export class ValidAnnotatedEditOperation implements IIdentifiedSingleEditOperati
 /**
  * @internal
  */
-export interface ITextBuffer {
+export interface IReadonlyTextBuffer {
+	onDidChangeContent: Event<void>;
 	equals(other: ITextBuffer): boolean;
 	mightContainRTL(): boolean;
+	mightContainUnusualLineTerminators(): boolean;
+	resetMightContainUnusualLineTerminators(): void;
 	mightContainNonBasicASCII(): boolean;
 	getBOM(): string;
 	getEOL(): string;
@@ -1286,13 +1312,19 @@ export interface ITextBuffer {
 	getLinesContent(): string[];
 	getLineContent(lineNumber: number): string;
 	getLineCharCode(lineNumber: number, index: number): number;
+	getCharCode(offset: number): number;
 	getLineLength(lineNumber: number): number;
 	getLineFirstNonWhitespaceColumn(lineNumber: number): number;
 	getLineLastNonWhitespaceColumn(lineNumber: number): number;
-
-	setEOL(newEOL: '\r\n' | '\n'): void;
-	applyEdits(rawOperations: ValidAnnotatedEditOperation[], recordTrimAutoWhitespace: boolean): ApplyEditsResult;
 	findMatchesLineByLine(searchRange: Range, searchData: SearchData, captureMatches: boolean, limitResultCount: number): FindMatch[];
+}
+
+/**
+ * @internal
+ */
+export interface ITextBuffer extends IReadonlyTextBuffer {
+	setEOL(newEOL: '\r\n' | '\n'): void;
+	applyEdits(rawOperations: ValidAnnotatedEditOperation[], recordTrimAutoWhitespace: boolean, computeUndoEdits: boolean): ApplyEditsResult;
 }
 
 /**
@@ -1301,7 +1333,7 @@ export interface ITextBuffer {
 export class ApplyEditsResult {
 
 	constructor(
-		public readonly reverseEdits: IValidEditOperation[],
+		public readonly reverseEdits: IValidEditOperation[] | null,
 		public readonly changes: IInternalModelContentChange[],
 		public readonly trimAutoWhitespaceLineNumbers: number[] | null
 	) { }

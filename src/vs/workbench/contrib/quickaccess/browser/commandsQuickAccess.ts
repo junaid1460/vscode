@@ -4,22 +4,30 @@
  *--------------------------------------------------------------------------------------------*/
 
 import { localize } from 'vs/nls';
-import { ICommandQuickPick } from 'vs/platform/quickinput/browser/commandsQuickAccess';
+import { ICommandQuickPick, CommandsHistory } from 'vs/platform/quickinput/browser/commandsQuickAccess';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
-import { IMenuService, MenuId, MenuItemAction, SubmenuItemAction } from 'vs/platform/actions/common/actions';
+import { IMenuService, MenuId, MenuItemAction, SubmenuItemAction, Action2 } from 'vs/platform/actions/common/actions';
 import { IExtensionService } from 'vs/workbench/services/extensions/common/extensions';
 import { CancellationToken } from 'vs/base/common/cancellation';
 import { timeout } from 'vs/base/common/async';
-import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { DisposableStore, toDisposable, dispose } from 'vs/base/common/lifecycle';
 import { AbstractEditorCommandsQuickAccessProvider } from 'vs/editor/contrib/quickAccess/commandsQuickAccess';
 import { IEditor } from 'vs/editor/common/editorCommon';
 import { Language } from 'vs/base/common/platform';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { IInstantiationService, ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
 import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
 import { ICommandService } from 'vs/platform/commands/common/commands';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
 import { INotificationService } from 'vs/platform/notification/common/notification';
+import { DefaultQuickAccessFilterValue } from 'vs/platform/quickinput/common/quickAccess';
+import { IConfigurationService } from 'vs/platform/configuration/common/configuration';
+import { IWorkbenchQuickAccessConfiguration } from 'vs/workbench/browser/quickaccess';
+import { stripCodicons } from 'vs/base/common/codicons';
+import { IQuickInputService } from 'vs/platform/quickinput/common/quickInput';
+import { IStorageService } from 'vs/platform/storage/common/storage';
+import { KeybindingWeight } from 'vs/platform/keybinding/common/keybindingsRegistry';
+import { KeyMod, KeyCode } from 'vs/base/common/keyCodes';
+import { IEditorGroupsService } from 'vs/workbench/services/editor/common/editorGroupsService';
 
 export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAccessProvider {
 
@@ -34,6 +42,14 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 
 	protected get activeTextEditorControl(): IEditor | undefined { return this.editorService.activeTextEditorControl; }
 
+	get defaultFilterValue(): DefaultQuickAccessFilterValue | undefined {
+		if (this.configuration.preserveInput) {
+			return DefaultQuickAccessFilterValue.LAST;
+		}
+
+		return undefined;
+	}
+
 	constructor(
 		@IEditorService private readonly editorService: IEditorService,
 		@IMenuService private readonly menuService: IMenuService,
@@ -42,9 +58,25 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 		@IKeybindingService keybindingService: IKeybindingService,
 		@ICommandService commandService: ICommandService,
 		@ITelemetryService telemetryService: ITelemetryService,
-		@INotificationService notificationService: INotificationService
+		@INotificationService notificationService: INotificationService,
+		@IConfigurationService private readonly configurationService: IConfigurationService,
+		@IEditorGroupsService private readonly editorGroupService: IEditorGroupsService
 	) {
-		super({ showAlias: !Language.isDefaultVariant() }, instantiationService, keybindingService, commandService, telemetryService, notificationService);
+		super({
+			showAlias: !Language.isDefaultVariant(),
+			noResultsPick: {
+				label: localize('noCommandResults', "No matching commands"),
+				commandId: ''
+			}
+		}, instantiationService, keybindingService, commandService, telemetryService, notificationService);
+	}
+
+	private get configuration() {
+		const commandPaletteConfig = this.configurationService.getValue<IWorkbenchQuickAccessConfiguration>().workbench.commandPalette;
+
+		return {
+			preserveInput: commandPaletteConfig.preserveInput
+		};
 	}
 
 	protected async getCommandPicks(disposables: DisposableStore, token: CancellationToken): Promise<Array<ICommandQuickPick>> {
@@ -64,11 +96,8 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 
 	private getGlobalCommandPicks(disposables: DisposableStore): ICommandQuickPick[] {
 		const globalCommandPicks: ICommandQuickPick[] = [];
-
-		const globalCommandsMenu = this.editorService.invokeWithinEditorContext(accessor =>
-			this.menuService.createMenu(MenuId.CommandPalette, accessor.get(IContextKeyService))
-		);
-
+		const scopedContextKeyService = this.editorService.activeEditorPane?.scopedContextKeyService || this.editorGroupService.activeGroup.scopedContextKeyService;
+		const globalCommandsMenu = this.menuService.createMenu(MenuId.CommandPalette, scopedContextKeyService);
 		const globalCommandsMenuActions = globalCommandsMenu.getActions()
 			.reduce((r, [, actions]) => [...r, ...actions], <Array<MenuItemAction | SubmenuItemAction | string>>[])
 			.filter(action => action instanceof MenuItemAction) as MenuItemAction[];
@@ -94,7 +123,7 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 			globalCommandPicks.push({
 				commandId: action.item.id,
 				commandAlias,
-				label
+				label: stripCodicons(label)
 			});
 		}
 
@@ -105,3 +134,51 @@ export class CommandsQuickAccessProvider extends AbstractEditorCommandsQuickAcce
 		return globalCommandPicks;
 	}
 }
+
+//#region Actions
+
+export class ShowAllCommandsAction extends Action2 {
+
+	static readonly ID = 'workbench.action.showCommands';
+
+	constructor() {
+		super({
+			id: ShowAllCommandsAction.ID,
+			title: { value: localize('showTriggerActions', "Show All Commands"), original: 'Show All Commands' },
+			f1: true,
+			keybinding: {
+				weight: KeybindingWeight.WorkbenchContrib,
+				when: undefined,
+				primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_P,
+				secondary: [KeyCode.F1]
+			}
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		accessor.get(IQuickInputService).quickAccess.show(CommandsQuickAccessProvider.PREFIX);
+	}
+}
+
+export class ClearCommandHistoryAction extends Action2 {
+
+	constructor() {
+		super({
+			id: 'workbench.action.clearCommandHistory',
+			title: { value: localize('clearCommandHistory', "Clear Command History"), original: 'Clear Command History' },
+			f1: true
+		});
+	}
+
+	async run(accessor: ServicesAccessor): Promise<void> {
+		const configurationService = accessor.get(IConfigurationService);
+		const storageService = accessor.get(IStorageService);
+
+		const commandHistoryLength = CommandsHistory.getConfiguredCommandHistoryLength(configurationService);
+		if (commandHistoryLength > 0) {
+			CommandsHistory.clearHistory(configurationService, storageService);
+		}
+	}
+}
+
+//#endregion

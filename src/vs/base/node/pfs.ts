@@ -9,13 +9,12 @@ import * as fs from 'fs';
 import * as os from 'os';
 import * as platform from 'vs/base/common/platform';
 import { Event } from 'vs/base/common/event';
-import { endsWith } from 'vs/base/common/strings';
 import { promisify } from 'util';
 import { isRootOrDriveLetter } from 'vs/base/common/extpath';
 import { generateUuid } from 'vs/base/common/uuid';
 import { normalizeNFC } from 'vs/base/common/normalization';
 
-// See https://github.com/Microsoft/vscode/issues/30180
+// See https://github.com/microsoft/vscode/issues/30180
 const WIN32_MAX_FILE_SIZE = 300 * 1024 * 1024; // 300 MB
 const GENERAL_MAX_FILE_SIZE = 16 * 1024 * 1024 * 1024; // 16 GB
 
@@ -492,7 +491,7 @@ export async function move(source: string, target: string): Promise<void> {
 		//
 		// 2.) The user tries to rename a file/folder that ends with a dot. This is not
 		// really possible to move then, at least on UNC devices.
-		if (source.toLowerCase() !== target.toLowerCase() && error.code === 'EXDEV' || endsWith(source, '.')) {
+		if (source.toLowerCase() !== target.toLowerCase() && error.code === 'EXDEV' || source.endsWith('.')) {
 			await copy(source, target);
 			await rimraf(source, RimRafMode.MOVE);
 			await updateMtime(target);

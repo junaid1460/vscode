@@ -6,16 +6,16 @@
 import * as nls from 'vs/nls';
 import * as types from 'vs/base/common/types';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { IConfigurationRegistry, Extensions as ConfigurationExtensions, IConfigurationPropertySchema, IConfigurationNode } from 'vs/platform/configuration/common/configurationRegistry';
+import { IConfigurationRegistry, Extensions as ConfigurationExtensions, IConfigurationPropertySchema, IConfigurationNode, ConfigurationScope } from 'vs/platform/configuration/common/configurationRegistry';
 
 import { IJSONSchema } from 'vs/base/common/jsonSchema';
 import { textmateColorsSchemaId, textmateColorGroupSchemaId } from 'vs/workbench/services/themes/common/colorThemeSchema';
 import { workbenchColorsSchemaId } from 'vs/platform/theme/common/colorRegistry';
 import { tokenStylingSchemaId } from 'vs/platform/theme/common/tokenClassificationRegistry';
-import { ThemeSettings, IWorkbenchColorTheme, IWorkbenchFileIconTheme, IColorCustomizations, ITokenColorCustomizations, IExperimentalTokenStyleCustomizations, IWorkbenchProductIconTheme } from 'vs/workbench/services/themes/common/workbenchThemeService';
+import { ThemeSettings, IWorkbenchColorTheme, IWorkbenchFileIconTheme, IColorCustomizations, ITokenColorCustomizations, IWorkbenchProductIconTheme, ISemanticTokenColorCustomizations, IExperimentalSemanticTokenColorCustomizations } from 'vs/workbench/services/themes/common/workbenchThemeService';
 import { IConfigurationService, ConfigurationTarget } from 'vs/platform/configuration/common/configuration';
+import { isMacintosh, isWeb, isWindows } from 'vs/base/common/platform';
 
-const DEFAULT_THEME_SETTING_VALUE = 'Default Dark+';
 const DEFAULT_THEME_DARK_SETTING_VALUE = 'Default Dark+';
 const DEFAULT_THEME_LIGHT_SETTING_VALUE = 'Default Light+';
 const DEFAULT_THEME_HC_SETTING_VALUE = 'Default High Contrast';
@@ -33,14 +33,14 @@ const colorThemeSettingEnumDescriptions: string[] = [];
 const colorThemeSettingSchema: IConfigurationPropertySchema = {
 	type: 'string',
 	description: nls.localize('colorTheme', "Specifies the color theme used in the workbench."),
-	default: DEFAULT_THEME_SETTING_VALUE,
+	default: isWeb ? DEFAULT_THEME_LIGHT_SETTING_VALUE : DEFAULT_THEME_DARK_SETTING_VALUE,
 	enum: colorThemeSettingEnum,
 	enumDescriptions: colorThemeSettingEnumDescriptions,
 	errorMessage: nls.localize('colorThemeError', "Theme is unknown or not installed."),
 };
 const preferredDarkThemeSettingSchema: IConfigurationPropertySchema = {
 	type: 'string',
-	description: nls.localize('preferredDarkColorTheme', 'Specifies the preferred color theme for dark OS appearance when \'{0}\' is enabled.', ThemeSettings.DETECT_COLOR_SCHEME),
+	markdownDescription: nls.localize('preferredDarkColorTheme', 'Specifies the preferred color theme for dark OS appearance when `#{0}#` is enabled.', ThemeSettings.DETECT_COLOR_SCHEME),
 	default: DEFAULT_THEME_DARK_SETTING_VALUE,
 	enum: colorThemeSettingEnum,
 	enumDescriptions: colorThemeSettingEnumDescriptions,
@@ -48,7 +48,7 @@ const preferredDarkThemeSettingSchema: IConfigurationPropertySchema = {
 };
 const preferredLightThemeSettingSchema: IConfigurationPropertySchema = {
 	type: 'string',
-	description: nls.localize('preferredLightColorTheme', 'Specifies the preferred color theme for light OS appearance when \'{0}\' is enabled.', ThemeSettings.DETECT_COLOR_SCHEME),
+	markdownDescription: nls.localize('preferredLightColorTheme', 'Specifies the preferred color theme for light OS appearance when `#{0}#` is enabled.', ThemeSettings.DETECT_COLOR_SCHEME),
 	default: DEFAULT_THEME_LIGHT_SETTING_VALUE,
 	enum: colorThemeSettingEnum,
 	enumDescriptions: colorThemeSettingEnumDescriptions,
@@ -56,10 +56,11 @@ const preferredLightThemeSettingSchema: IConfigurationPropertySchema = {
 };
 const preferredHCThemeSettingSchema: IConfigurationPropertySchema = {
 	type: 'string',
-	description: nls.localize('preferredHCColorTheme', 'Specifies the preferred color theme used in high contrast mode when \'{0}\' is enabled.', ThemeSettings.DETECT_HC),
+	markdownDescription: nls.localize('preferredHCColorTheme', 'Specifies the preferred color theme used in high contrast mode when `#{0}#` is enabled.', ThemeSettings.DETECT_HC),
 	default: DEFAULT_THEME_HC_SETTING_VALUE,
 	enum: colorThemeSettingEnum,
 	enumDescriptions: colorThemeSettingEnumDescriptions,
+	included: isWindows || isMacintosh,
 	errorMessage: nls.localize('colorThemeError', "Theme is unknown or not installed."),
 };
 const detectColorSchemeSettingSchema: IConfigurationPropertySchema = {
@@ -78,11 +79,10 @@ const colorCustomizationsSchema: IConfigurationPropertySchema = {
 		}
 	}]
 };
-
 const fileIconThemeSettingSchema: IConfigurationPropertySchema = {
 	type: ['string', 'null'],
 	default: DEFAULT_FILE_ICON_THEME_SETTING_VALUE,
-	description: nls.localize('iconTheme', "Specifies the icon theme used in the workbench or 'null' to not show any file icons."),
+	description: nls.localize('iconTheme', "Specifies the file icon theme used in the workbench or 'null' to not show any file icons."),
 	enum: [null],
 	enumDescriptions: [nls.localize('noIconThemeDesc', 'No file icons')],
 	errorMessage: nls.localize('iconThemeError', "File icon theme is unknown or not installed.")
@@ -90,10 +90,17 @@ const fileIconThemeSettingSchema: IConfigurationPropertySchema = {
 const productIconThemeSettingSchema: IConfigurationPropertySchema = {
 	type: ['string', 'null'],
 	default: DEFAULT_PRODUCT_ICON_THEME_SETTING_VALUE,
-	description: nls.localize('workbenchIconTheme', "Specifies the workbench icon theme used."),
+	description: nls.localize('productIconTheme', "Specifies the product icon theme used."),
 	enum: [DEFAULT_PRODUCT_ICON_THEME_SETTING_VALUE],
-	enumDescriptions: [nls.localize('defaultWorkbenchIconThemeDesc', 'Default')],
-	errorMessage: nls.localize('workbenchIconThemeError', "Workbench icon theme is unknown or not installed.")
+	enumDescriptions: [nls.localize('defaultProductIconThemeDesc', 'Default')],
+	errorMessage: nls.localize('productIconThemeError', "Product icon theme is unknown or not installed.")
+};
+
+const detectHCSchemeSettingSchema: IConfigurationPropertySchema = {
+	type: 'boolean',
+	default: true,
+	description: nls.localize('autoDetectHighContrast', "If enabled, will automatically change to high contrast theme if the OS is using a high contrast theme."),
+	scope: ConfigurationScope.APPLICATION
 };
 
 const themeSettingsConfiguration: IConfigurationNode = {
@@ -105,13 +112,23 @@ const themeSettingsConfiguration: IConfigurationNode = {
 		[ThemeSettings.PREFERRED_DARK_THEME]: preferredDarkThemeSettingSchema,
 		[ThemeSettings.PREFERRED_LIGHT_THEME]: preferredLightThemeSettingSchema,
 		[ThemeSettings.PREFERRED_HC_THEME]: preferredHCThemeSettingSchema,
-		[ThemeSettings.DETECT_COLOR_SCHEME]: detectColorSchemeSettingSchema,
-		[ThemeSettings.ICON_THEME]: fileIconThemeSettingSchema,
+		[ThemeSettings.FILE_ICON_THEME]: fileIconThemeSettingSchema,
 		[ThemeSettings.COLOR_CUSTOMIZATIONS]: colorCustomizationsSchema,
 		[ThemeSettings.PRODUCT_ICON_THEME]: productIconThemeSettingSchema
 	}
 };
 configurationRegistry.registerConfiguration(themeSettingsConfiguration);
+
+const themeSettingsWindowConfiguration: IConfigurationNode = {
+	id: 'window',
+	order: 8.1,
+	type: 'object',
+	properties: {
+		[ThemeSettings.DETECT_HC]: detectHCSchemeSettingSchema,
+		[ThemeSettings.DETECT_COLOR_SCHEME]: detectColorSchemeSettingSchema,
+	}
+};
+configurationRegistry.registerConfiguration(themeSettingsWindowConfiguration);
 
 function tokenGroupSettings(description: string): IJSONSchema {
 	return {
@@ -135,19 +152,47 @@ const tokenColorSchema: IJSONSchema = {
 		},
 		semanticHighlighting: {
 			description: nls.localize('editorColors.semanticHighlighting', 'Whether semantic highlighting should be enabled for this theme.'),
+			deprecationMessage: nls.localize('editorColors.semanticHighlighting.deprecationMessage', 'Use `enabled` in `editor.semanticTokenColorCustomizations` setting instead.'),
+			markdownDeprecationMessage: nls.localize('editorColors.semanticHighlighting.deprecationMessageMarkdown', 'Use `enabled` in `#editor.semanticTokenColorCustomizations#` setting instead.'),
 			type: 'boolean'
 		}
 	}
 };
+
 const tokenColorCustomizationSchema: IConfigurationPropertySchema = {
-	description: nls.localize('editorColors', "Overrides editor colors and font style from the currently selected color theme."),
+	description: nls.localize('editorColors', "Overrides editor syntax colors and font style from the currently selected color theme."),
 	default: {},
 	allOf: [tokenColorSchema]
 };
-const experimentalTokenStylingCustomizationSchema: IConfigurationPropertySchema = {
-	description: nls.localize('editorColorsTokenStyles', "Overrides token color and styles from the currently selected color theme."),
+
+const semanticTokenColorSchema: IJSONSchema = {
+	type: 'object',
+	properties: {
+		enabled: {
+			type: 'boolean',
+			description: nls.localize('editorColors.semanticHighlighting.enabled', 'Whether semantic highlighting is enabled or disabled for this theme'),
+			suggestSortText: '0_enabled'
+		},
+		rules: {
+			$ref: tokenStylingSchemaId,
+			description: nls.localize('editorColors.semanticHighlighting.rules', 'Semantic token styling rules for this theme.'),
+			suggestSortText: '0_rules'
+		}
+	},
+	additionalProperties: false
+};
+
+const semanticTokenColorCustomizationSchema: IConfigurationPropertySchema = {
+	description: nls.localize('semanticTokenColors', "Overrides editor semantic token color and styles from the currently selected color theme."),
 	default: {},
-	allOf: [{ $ref: tokenStylingSchemaId }]
+	allOf: [{ ...semanticTokenColorSchema, patternProperties: { '^\\[': {} } }]
+};
+
+const experimentalTokenStylingCustomizationSchema: IConfigurationPropertySchema = {
+	deprecationMessage: nls.localize('editorColors.experimentalTokenStyling.deprecationMessage', 'Use `editor.semanticTokenColorCustomizations` instead.'),
+	markdownDeprecationMessage: nls.localize('editorColors.experimentalTokenStyling.deprecationMessageMarkdown', 'Use `#editor.semanticTokenColorCustomizations#` instead.'),
+	default: {},
+	allOf: [{ $ref: tokenStylingSchemaId }],
 };
 const tokenColorCustomizationConfiguration: IConfigurationNode = {
 	id: 'editor',
@@ -155,6 +200,7 @@ const tokenColorCustomizationConfiguration: IConfigurationNode = {
 	type: 'object',
 	properties: {
 		[ThemeSettings.TOKEN_COLOR_CUSTOMIZATIONS]: tokenColorCustomizationSchema,
+		[ThemeSettings.SEMANTIC_TOKEN_COLOR_CUSTOMIZATIONS]: semanticTokenColorCustomizationSchema,
 		[ThemeSettings.TOKEN_COLOR_CUSTOMIZATIONS_EXPERIMENTAL]: experimentalTokenStylingCustomizationSchema
 	}
 };
@@ -168,22 +214,24 @@ export function updateColorThemeConfigurationSchemas(themes: IWorkbenchColorThem
 
 	const themeSpecificWorkbenchColors: IJSONSchema = { properties: {} };
 	const themeSpecificTokenColors: IJSONSchema = { properties: {} };
-	const themeSpecificTokenStyling: IJSONSchema = { properties: {} };
+	const themeSpecificSemanticTokenColors: IJSONSchema = { properties: {} };
+	const experimentalThemeSpecificSemanticTokenColors: IJSONSchema = { properties: {} };
 
 	const workbenchColors = { $ref: workbenchColorsSchemaId, additionalProperties: false };
 	const tokenColors = { properties: tokenColorSchema.properties, additionalProperties: false };
-	const tokenStyling = { $ref: tokenStylingSchemaId, additionalProperties: false };
 	for (let t of themes) {
 		// add theme specific color customization ("[Abyss]":{ ... })
 		const themeId = `[${t.settingsId}]`;
 		themeSpecificWorkbenchColors.properties![themeId] = workbenchColors;
 		themeSpecificTokenColors.properties![themeId] = tokenColors;
-		themeSpecificTokenStyling.properties![themeId] = tokenStyling;
+		themeSpecificSemanticTokenColors.properties![themeId] = semanticTokenColorSchema;
+		experimentalThemeSpecificSemanticTokenColors.properties![themeId] = { $ref: tokenStylingSchemaId, additionalProperties: false };
 	}
 
 	colorCustomizationsSchema.allOf![1] = themeSpecificWorkbenchColors;
 	tokenColorCustomizationSchema.allOf![1] = themeSpecificTokenColors;
-	experimentalTokenStylingCustomizationSchema.allOf![1] = themeSpecificTokenStyling;
+	semanticTokenColorCustomizationSchema.allOf![1] = themeSpecificSemanticTokenColors;
+	experimentalTokenStylingCustomizationSchema.allOf![1] = experimentalThemeSpecificSemanticTokenColors;
 
 	configurationRegistry.notifyConfigurationSchemaUpdated(themeSettingsConfiguration, tokenColorCustomizationConfiguration);
 }
@@ -212,7 +260,7 @@ export class ThemeConfiguration {
 	}
 
 	public get fileIconTheme(): string | null {
-		return this.configurationService.getValue<string | null>(ThemeSettings.ICON_THEME);
+		return this.configurationService.getValue<string | null>(ThemeSettings.FILE_ICON_THEME);
 	}
 
 	public get productIconTheme(): string {
@@ -227,8 +275,12 @@ export class ThemeConfiguration {
 		return this.configurationService.getValue<ITokenColorCustomizations>(ThemeSettings.TOKEN_COLOR_CUSTOMIZATIONS) || {};
 	}
 
-	public get tokenStylesCustomizations(): IExperimentalTokenStyleCustomizations {
-		return this.configurationService.getValue<IExperimentalTokenStyleCustomizations>(ThemeSettings.TOKEN_COLOR_CUSTOMIZATIONS_EXPERIMENTAL) || {};
+	public get semanticTokenColorCustomizations(): ISemanticTokenColorCustomizations | undefined {
+		return this.configurationService.getValue<ISemanticTokenColorCustomizations>(ThemeSettings.SEMANTIC_TOKEN_COLOR_CUSTOMIZATIONS);
+	}
+
+	public get experimentalSemanticTokenColorCustomizations(): IExperimentalSemanticTokenColorCustomizations | undefined {
+		return this.configurationService.getValue<IExperimentalSemanticTokenColorCustomizations>(ThemeSettings.TOKEN_COLOR_CUSTOMIZATIONS_EXPERIMENTAL);
 	}
 
 	public async setColorTheme(theme: IWorkbenchColorTheme, settingsTarget: ConfigurationTarget | undefined | 'auto'): Promise<IWorkbenchColorTheme> {
@@ -237,13 +289,25 @@ export class ThemeConfiguration {
 	}
 
 	public async setFileIconTheme(theme: IWorkbenchFileIconTheme, settingsTarget: ConfigurationTarget | undefined | 'auto'): Promise<IWorkbenchFileIconTheme> {
-		await this.writeConfiguration(ThemeSettings.ICON_THEME, theme.settingsId, settingsTarget);
+		await this.writeConfiguration(ThemeSettings.FILE_ICON_THEME, theme.settingsId, settingsTarget);
 		return theme;
 	}
 
 	public async setProductIconTheme(theme: IWorkbenchProductIconTheme, settingsTarget: ConfigurationTarget | undefined | 'auto'): Promise<IWorkbenchProductIconTheme> {
 		await this.writeConfiguration(ThemeSettings.PRODUCT_ICON_THEME, theme.settingsId, settingsTarget);
 		return theme;
+	}
+
+	public findAutoConfigurationTarget(key: string) {
+		let settings = this.configurationService.inspect(key);
+		if (!types.isUndefined(settings.workspaceFolderValue)) {
+			return ConfigurationTarget.WORKSPACE_FOLDER;
+		} else if (!types.isUndefined(settings.workspaceValue)) {
+			return ConfigurationTarget.WORKSPACE;
+		} else if (!types.isUndefined(settings.userRemote)) {
+			return ConfigurationTarget.USER_REMOTE;
+		}
+		return ConfigurationTarget.USER;
 	}
 
 	private async writeConfiguration(key: string, value: any, settingsTarget: ConfigurationTarget | 'auto' | undefined): Promise<void> {
@@ -253,13 +317,7 @@ export class ThemeConfiguration {
 
 		let settings = this.configurationService.inspect(key);
 		if (settingsTarget === 'auto') {
-			if (!types.isUndefined(settings.workspaceFolderValue)) {
-				settingsTarget = ConfigurationTarget.WORKSPACE_FOLDER;
-			} else if (!types.isUndefined(settings.workspaceValue)) {
-				settingsTarget = ConfigurationTarget.WORKSPACE;
-			} else {
-				settingsTarget = ConfigurationTarget.USER;
-			}
+			settingsTarget = this.findAutoConfigurationTarget(key);
 		}
 
 		if (settingsTarget === ConfigurationTarget.USER) {
@@ -271,12 +329,11 @@ export class ThemeConfiguration {
 				}
 				value = undefined; // remove configuration from user settings
 			}
-		} else if (settingsTarget === ConfigurationTarget.WORKSPACE || settingsTarget === ConfigurationTarget.WORKSPACE_FOLDER) {
+		} else if (settingsTarget === ConfigurationTarget.WORKSPACE || settingsTarget === ConfigurationTarget.WORKSPACE_FOLDER || settingsTarget === ConfigurationTarget.USER_REMOTE) {
 			if (value === settings.value) {
 				return Promise.resolve(undefined); // nothing to do
 			}
 		}
 		return this.configurationService.updateValue(key, value, settingsTarget);
 	}
-
 }

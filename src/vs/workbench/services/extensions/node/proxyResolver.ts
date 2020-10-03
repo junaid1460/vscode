@@ -11,8 +11,6 @@ import * as os from 'os';
 import * as fs from 'fs';
 import * as cp from 'child_process';
 
-import { assign } from 'vs/base/common/objects';
-import { endsWith } from 'vs/base/common/strings';
 import { IExtHostWorkspaceProvider } from 'vs/workbench/api/common/extHostWorkspace';
 import { ExtHostConfigProvider } from 'vs/workbench/api/common/extHostConfiguration';
 import { ProxyAgent } from 'vscode-proxy-agent';
@@ -22,6 +20,7 @@ import { ExtHostExtensionService } from 'vs/workbench/api/node/extHostExtensionS
 import { URI } from 'vs/base/common/uri';
 import { promisify } from 'util';
 import { ILogService } from 'vs/platform/log/common/log';
+import { IExtensionDescription } from 'vs/platform/extensions/common/extensions';
 
 interface ConnectionResult {
 	proxy: string;
@@ -289,7 +288,7 @@ function noProxyFromEnv(envValue?: string) {
 		return () => false;
 	}
 	return (hostname: string, port: string) => filters.some(({ domain, port: filterPort }) => {
-		return endsWith(`.${hostname.toLowerCase()}`, domain) && (!filterPort || port === filterPort);
+		return `.${hostname.toLowerCase()}`.endsWith(domain) && (!filterPort || port === filterPort);
 	});
 }
 
@@ -313,20 +312,20 @@ function createPatchedModules(configProvider: ExtHostConfigProvider, resolveProx
 
 	return {
 		http: {
-			off: assign({}, http, patches(http, resolveProxy, { config: 'off' }, certSetting, true)),
-			on: assign({}, http, patches(http, resolveProxy, { config: 'on' }, certSetting, true)),
-			override: assign({}, http, patches(http, resolveProxy, { config: 'override' }, certSetting, true)),
-			onRequest: assign({}, http, patches(http, resolveProxy, proxySetting, certSetting, true)),
-			default: assign(http, patches(http, resolveProxy, proxySetting, certSetting, false)) // run last
-		},
+			off: Object.assign({}, http, patches(http, resolveProxy, { config: 'off' }, certSetting, true)),
+			on: Object.assign({}, http, patches(http, resolveProxy, { config: 'on' }, certSetting, true)),
+			override: Object.assign({}, http, patches(http, resolveProxy, { config: 'override' }, certSetting, true)),
+			onRequest: Object.assign({}, http, patches(http, resolveProxy, proxySetting, certSetting, true)),
+			default: Object.assign(http, patches(http, resolveProxy, proxySetting, certSetting, false)) // run last
+		} as Record<string, typeof http>,
 		https: {
-			off: assign({}, https, patches(https, resolveProxy, { config: 'off' }, certSetting, true)),
-			on: assign({}, https, patches(https, resolveProxy, { config: 'on' }, certSetting, true)),
-			override: assign({}, https, patches(https, resolveProxy, { config: 'override' }, certSetting, true)),
-			onRequest: assign({}, https, patches(https, resolveProxy, proxySetting, certSetting, true)),
-			default: assign(https, patches(https, resolveProxy, proxySetting, certSetting, false)) // run last
-		},
-		tls: assign(tls, tlsPatches(tls))
+			off: Object.assign({}, https, patches(https, resolveProxy, { config: 'off' }, certSetting, true)),
+			on: Object.assign({}, https, patches(https, resolveProxy, { config: 'on' }, certSetting, true)),
+			override: Object.assign({}, https, patches(https, resolveProxy, { config: 'override' }, certSetting, true)),
+			onRequest: Object.assign({}, https, patches(https, resolveProxy, proxySetting, certSetting, true)),
+			default: Object.assign(https, patches(https, resolveProxy, proxySetting, certSetting, false)) // run last
+		} as Record<string, typeof https>,
+		tls: Object.assign(tls, tlsPatches(tls))
 	};
 }
 
@@ -411,6 +410,7 @@ function tlsPatches(originals: typeof tls) {
 	}
 }
 
+const modulesCache = new Map<IExtensionDescription | undefined, { http?: typeof http, https?: typeof https }>();
 function configureModuleLoading(extensionService: ExtHostExtensionService, lookup: ReturnType<typeof createPatchedModules>): Promise<void> {
 	return extensionService.getExtensionPathIndex()
 		.then(extensionPaths => {
@@ -427,10 +427,18 @@ function configureModuleLoading(extensionService: ExtHostExtensionService, looku
 
 				const modules = lookup[request];
 				const ext = extensionPaths.findSubstr(URI.file(parent.filename).fsPath);
-				if (ext && ext.enableProposedApi) {
-					return (modules as any)[(<any>ext).proxySupport] || modules.onRequest;
+				let cache = modulesCache.get(ext);
+				if (!cache) {
+					modulesCache.set(ext, cache = {});
 				}
-				return modules.default;
+				if (!cache[request]) {
+					let mod = modules.default;
+					if (ext && ext.enableProposedApi) {
+						mod = (modules as any)[(<any>ext).proxySupport] || modules.onRequest;
+					}
+					cache[request] = <any>{ ...mod }; // Copy to work around #93167.
+				}
+				return cache[request];
 			};
 		});
 }
@@ -483,9 +491,8 @@ async function readCaCertificates() {
 }
 
 async function readWindowsCaCertificates() {
-	const winCA = await new Promise<any>((resolve, reject) => {
-		require(['vscode-windows-ca-certs'], resolve, reject);
-	});
+	// @ts-ignore Windows only
+	const winCA = await import('vscode-windows-ca-certs');
 
 	let ders: any[] = [];
 	const store = winCA();

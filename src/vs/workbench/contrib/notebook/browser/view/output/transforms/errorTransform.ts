@@ -3,9 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import { IRenderOutput, CellOutputKind } from 'vs/workbench/contrib/notebook/common/notebookCommon';
-import { registerOutputTransform } from 'vs/workbench/contrib/notebook/browser/notebookRegistry';
-import * as DOM from 'vs/base/browser/dom';
+import { IRenderOutput, CellOutputKind, IErrorOutput, RenderOutputType } from 'vs/workbench/contrib/notebook/common/notebookCommon';
+import { NotebookRegistry } from 'vs/workbench/contrib/notebook/browser/notebookRegistry';
 import { RGBA, Color } from 'vs/base/common/color';
 import { ansiColorIdentifiers } from 'vs/workbench/contrib/terminal/common/terminalColorRegistry';
 import { IThemeService } from 'vs/platform/theme/common/themeService';
@@ -18,25 +17,32 @@ class ErrorTransform implements IOutputTransformContribution {
 	) {
 	}
 
-	render(output: any, container: HTMLElement): IRenderOutput {
+	render(output: IErrorOutput, container: HTMLElement): IRenderOutput {
+		const header = document.createElement('div');
+		const headerMessage = output.ename && output.evalue
+			? `${output.ename}: ${output.evalue}`
+			: output.ename || output.evalue;
+		if (headerMessage) {
+			header.innerText = headerMessage;
+			container.appendChild(header);
+		}
 		const traceback = document.createElement('pre');
-		DOM.addClasses(traceback, 'traceback');
+		traceback.classList.add('traceback');
 		if (output.traceback) {
 			for (let j = 0; j < output.traceback.length; j++) {
 				traceback.appendChild(handleANSIOutput(output.traceback[j], this.themeService));
 			}
 		}
 		container.appendChild(traceback);
-		return {
-			hasDynamicHeight: false
-		};
+		container.classList.add('error');
+		return { type: RenderOutputType.None, hasDynamicHeight: false };
 	}
 
 	dispose(): void {
 	}
 }
 
-registerOutputTransform('notebook.output.error', CellOutputKind.Error, ErrorTransform);
+NotebookRegistry.registerOutputTransform('notebook.output.error', CellOutputKind.Error, ErrorTransform);
 
 /**
  * @param text The content to stylize.
@@ -165,7 +171,7 @@ export function handleANSIOutput(text: string, themeService: IThemeService): HTM
 	 * @see {@link https://en.wikipedia.org/wiki/ANSI_escape_code }
 	 */
 	function setBasicFormatters(styleCodes: number[]): void {
-		for (let code of styleCodes) {
+		for (const code of styleCodes) {
 			switch (code) {
 				case 0: {
 					styleNames = [];

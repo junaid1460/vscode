@@ -9,7 +9,7 @@ import { ISearchConfiguration, ISearchConfigurationProperties } from 'vs/workben
 import { SymbolKind, Location, ProviderResult, SymbolTag } from 'vs/editor/common/modes';
 import { IWorkspaceContextService } from 'vs/platform/workspace/common/workspace';
 import { URI } from 'vs/base/common/uri';
-import { toResource, SideBySideEditor } from 'vs/workbench/common/editor';
+import { EditorResourceAccessor, SideBySideEditor } from 'vs/workbench/common/editor';
 import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { CancellationToken } from 'vs/base/common/cancellation';
 import { ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
@@ -77,6 +77,9 @@ export interface IWorkbenchSearchConfigurationProperties extends ISearchConfigur
 	quickOpen: {
 		includeSymbols: boolean;
 		includeHistory: boolean;
+		history: {
+			filterSortOrder: 'default' | 'recency'
+		}
 	};
 }
 
@@ -93,22 +96,22 @@ export function getOutOfWorkspaceEditorResources(accessor: ServicesAccessor): UR
 	const fileService = accessor.get(IFileService);
 
 	const resources = editorService.editors
-		.map(editor => toResource(editor, { supportSideBySide: SideBySideEditor.MASTER }))
+		.map(editor => EditorResourceAccessor.getOriginalUri(editor, { supportSideBySide: SideBySideEditor.PRIMARY }))
 		.filter(resource => !!resource && !contextService.isInsideWorkspace(resource) && fileService.canHandleResource(resource));
 
 	return resources as URI[];
 }
 
 // Supports patterns of <path><#|:|(><line><#|:|,><col?>
-const LINE_COLON_PATTERN = /\s?[#:\(](\d*)([#:,](\d*))?\)?\s*$/;
+const LINE_COLON_PATTERN = /\s?[#:\(](?:line )?(\d*)(?:[#:,](\d*))?\)?\s*$/;
 
 export interface IFilterAndRange {
 	filter: string;
 	range: IRange;
 }
 
-export function extractRangeFromFilter(filter: string): IFilterAndRange | undefined {
-	if (!filter) {
+export function extractRangeFromFilter(filter: string, unless?: string[]): IFilterAndRange | undefined {
+	if (!filter || unless?.some(value => filter.indexOf(value) !== -1)) {
 		return undefined;
 	}
 
@@ -116,8 +119,9 @@ export function extractRangeFromFilter(filter: string): IFilterAndRange | undefi
 
 	// Find Line/Column number from search value using RegExp
 	const patternMatch = LINE_COLON_PATTERN.exec(filter);
-	if (patternMatch && patternMatch.length > 1) {
-		const startLineNumber = parseInt(patternMatch[1], 10);
+
+	if (patternMatch) {
+		const startLineNumber = parseInt(patternMatch[1] ?? '', 10);
 
 		// Line Number
 		if (isNumber(startLineNumber)) {
@@ -129,16 +133,14 @@ export function extractRangeFromFilter(filter: string): IFilterAndRange | undefi
 			};
 
 			// Column Number
-			if (patternMatch.length > 3) {
-				const startColumn = parseInt(patternMatch[3], 10);
-				if (isNumber(startColumn)) {
-					range = {
-						startLineNumber: range.startLineNumber,
-						startColumn: startColumn,
-						endLineNumber: range.endLineNumber,
-						endColumn: startColumn
-					};
-				}
+			const startColumn = parseInt(patternMatch[2] ?? '', 10);
+			if (isNumber(startColumn)) {
+				range = {
+					startLineNumber: range.startLineNumber,
+					startColumn: startColumn,
+					endLineNumber: range.endLineNumber,
+					endColumn: startColumn
+				};
 			}
 		}
 

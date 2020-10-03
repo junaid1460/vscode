@@ -182,6 +182,13 @@ export interface IQuickPickAcceptEvent {
 	inBackground: boolean;
 }
 
+export enum ItemActivation {
+	NONE,
+	FIRST,
+	SECOND,
+	LAST
+}
+
 export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 
 	value: string;
@@ -192,7 +199,7 @@ export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 	 */
 	filterValue: (value: string) => string;
 
-	ariaLabel: string;
+	ariaLabel: string | undefined;
 
 	placeholder: string | undefined;
 
@@ -237,19 +244,16 @@ export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 
 	autoFocusOnList: boolean;
 
-	/**
-	 * If enabled, will try to select the second entry of the picks
-	 * once they appear instead of the first one. This is useful
-	 * e.g. when `quickNavigate` is enabled to be able to select
-	 * a previous entry by just releasing the quick nav keys.
-	 */
-	autoFocusSecondEntry: boolean;
-
 	quickNavigate: IQuickNavigateConfiguration | undefined;
 
 	activeItems: ReadonlyArray<T>;
 
 	readonly onDidChangeActive: Event<T[]>;
+
+	/**
+	 * Allows to control which entry should be activated by default.
+	 */
+	itemActivation: ItemActivation;
 
 	selectedItems: ReadonlyArray<T>;
 
@@ -264,6 +268,15 @@ export interface IQuickPick<T extends IQuickPickItem> extends IQuickInput {
 	inputHasFocus(): boolean;
 
 	focusOnInput(): void;
+
+	/**
+	 * Hides the input box from the picker UI. This is typically used
+	 * in combination with quick-navigation where no search UI should
+	 * be presented.
+	 */
+	hideInput: boolean;
+
+	hideCheckAll: boolean;
 }
 
 export interface IInputBox extends IQuickInput {
@@ -296,7 +309,7 @@ export interface IQuickInputButton {
 	iconClass?: string;
 	tooltip?: string;
 	/**
-	 * Wether to always show the button. By default buttons
+	 * Whether to always show the button. By default buttons
 	 * are only visible when hovering over them with the mouse
 	 */
 	alwaysVisible?: boolean;
@@ -316,7 +329,7 @@ export type QuickPickInput<T = IQuickPickItem> = T | IQuickPickSeparator;
 
 //region Fuzzy Scorer Support
 
-export type IQuickPickItemWithResource = IQuickPickItem & { resource: URI | undefined };
+export type IQuickPickItemWithResource = IQuickPickItem & { resource?: URI };
 
 export class QuickPickItemScorerAccessor implements IItemAccessor<IQuickPickItemWithResource> {
 
